@@ -31,10 +31,4 @@ jobs:
         with:
           name: n8n-runner-package
           path: n8n-custom-runner.tar.gz
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: n8n-runner-tarball
-          path: n8n-runner.tar
           retention-days: 7 # 在 GitHub 上保留 7 天
