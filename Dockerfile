@@ -1,4 +1,4 @@
-FROM n8nio/runners:2.10.3
+FROM n8nio/runners:2.11.1
 
 # 1. 切换到 root 用户以获取安装权限
 USER root
