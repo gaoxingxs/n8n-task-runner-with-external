@@ -1,0 +1,48 @@
+name: Build zstd Multi-Arch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      # 使用矩阵同时运行两个任务
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: facebook/zstd
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # 安装 arm64 交叉编译器
+            sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+          else
+            sudo apt-get install -y build-essential
+          fi
+
+      - name: Compile zstd
+        run: |
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            # 使用 CC 变量指定交叉编译器
+            make -j$(nproc) CC=aarch64-linux-gnu-gcc
+          else
+            make -j$(nproc)
+          fi
+
+      - name: Prepare Artifact
+        run: |
+          # 将二进制文件重命名，方便区分
+          mv zstd zstd-${{ matrix.arch }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zstd-${{ matrix.arch }}
+          path: zstd-${{ matrix.arch }}
