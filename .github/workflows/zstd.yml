@@ -1,4 +1,4 @@
-name: Build zstd Multi-Arch
+name: Build zstd Static
 
 on:
   workflow_dispatch:
@@ -7,7 +7,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
-      # 使用矩阵同时运行两个任务
       matrix:
         arch: [amd64, arm64]
 
@@ -20,29 +19,36 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
+          # 安装交叉编译器以及可能的静态库支持
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # 安装 arm64 交叉编译器
-            sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+            sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu libc6-dev-arm64-cross
           else
-            sudo apt-get install -y build-essential
+            sudo apt-get install -y build-essential libc6-dev
           fi
 
-      - name: Compile zstd
+      - name: Compile zstd (Fully Static)
         run: |
           if [ "${{ matrix.arch }}" = "arm64" ]; then
-            # 使用 CC 变量指定交叉编译器
-            make -j$(nproc) CC=aarch64-linux-gnu-gcc
+            # 关键点：添加 LDFLAGS="-static" 实现全静态链接
+            make -j$(nproc) CC=aarch64-linux-gnu-gcc LDFLAGS="-static"
           else
-            make -j$(nproc)
+            make -j$(nproc) LDFLAGS="-static"
           fi
 
-      - name: Prepare Artifact
+      - name: Verify Binary
         run: |
-          # 将二进制文件重命名，方便区分
-          mv zstd zstd-${{ matrix.arch }}
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            # 检查是否真的成了静态链接（arm64 在 amd64 环境下无法直接运行，跳过验证）
+            ldd zstd || echo "Static binary confirmed"
+            file zstd
+          fi
 
+      - name: Prepare and Upload
+        run: |
+          mv zstd zstd-${{ matrix.arch }}-static
+        
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zstd-${{ matrix.arch }}
-          path: zstd-${{ matrix.arch }}
+          name: zstd-${{ matrix.arch }}-static
+          path: zstd-${{ matrix.arch }}-static
