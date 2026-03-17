@@ -1,30 +1,35 @@
-name: build-ansible-offline
+name: Download Ansible for CentOS 7 Offline
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 手动触发执行
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: centos:7 # 核心：使用与目标环境一致的镜像
 
     steps:
-      - name: checkout
-        uses: actions/checkout@v4
-
-      - name: install ansible
+      - name: Prepare Repository and Tools
         run: |
-          pip install ansible
+          # 安装 epel 源以获取 ansible
+          yum install -y epel-release
+          # 安装下载工具
+          yum install -y yum-utils
+          mkdir /opt/ansible-offline
 
-      - name: download galaxy dependencies
+      - name: Download Ansible and Dependencies
         run: |
-          ansible-galaxy collection install -r requirements.yml -p collections
-          ansible-galaxy role install -r requirements.yml -p roles
+          # 仅下载依赖，不安装
+          # --resolve 解决依赖，--destdir 指定存放目录
+          yumdownloader --resolve --destdir=/opt/ansible-offline ansible
 
-      - name: package
+      - name: Tar Files
         run: |
-          tar czf ansible-offline.tar.gz *
+          tar -czvf ansible-centos7-offline.tar.gz -C /opt ansible-offline
 
-      - name: upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ansible-offline
-          path: ansible-offline.tar.gz
+          name: ansible-offline-package
+          path: ansible-centos7-offline.tar.gz
