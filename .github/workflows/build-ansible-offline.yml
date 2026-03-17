@@ -1,0 +1,30 @@
+name: build-ansible-offline
+
+on:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install ansible
+        run: |
+          pip install ansible
+
+      - name: download galaxy dependencies
+        run: |
+          ansible-galaxy collection install -r requirements.yml -p collections
+          ansible-galaxy role install -r requirements.yml -p roles
+
+      - name: package
+        run: |
+          tar czf ansible-offline.tar.gz *
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ansible-offline
+          path: ansible-offline.tar.gz
