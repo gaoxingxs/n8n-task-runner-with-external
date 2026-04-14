@@ -1,0 +1,96 @@
+name: Build Offline Dependencies
+
+on:
+  workflow_dispatch:
+    inputs:
+      python_version:
+        description: 'Python version'
+        required: true
+        default: '3.9'
+      # 🔴 新增：依赖列表输入框
+      requirements_content:
+        description: '请输入依赖列表 (每行一个，例如 pandas==2.0.3)'
+        required: true
+        default: |
+          requests==2.31.0
+          pandas==2.0.3
+          pyarrow==12.0.1
+
+jobs:
+  build-wheels:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: matrix.arch == 'arm64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build/Download wheels in target architecture container
+        run: |
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            DOCKER_PLATFORM="linux/arm64"
+          else
+            DOCKER_PLATFORM="linux/amd64"
+          fi
+
+          mkdir -p ./offline_packages
+          
+          cat <<EOF > requirements_action.txt
+          ${{ github.event.inputs.requirements_content }}
+          EOF
+          
+          REQ_FILE_ABS=$(realpath requirements_action.txt)
+          OUTPUT_DIR_ABS=$(realpath ./offline_packages)
+
+          echo "=============================================="
+          echo "Starting container for ${DOCKER_PLATFORM}..."
+          echo "=============================================="
+
+          docker run --rm \
+            --platform ${DOCKER_PLATFORM} \
+            -v ${REQ_FILE_ABS}:/tmp/requirements.txt \
+            -v ${OUTPUT_DIR_ABS}:/tmp/wheels \
+            python:${{ github.event.inputs.python_version }}-slim \
+            bash -c "
+              set -e
+              
+              # 容器内：安装基础编译环境（很多 C 扩展包源码编译需要）
+              apt-get update && apt-get install -y build-essential gcc g++ || true
+              
+              # 升级 pip
+              pip install --upgrade pip wheel setuptools
+              
+              echo '======================================================'
+              echo 'Step 1: Attempting to download pre-built wheels...'
+              echo '======================================================'
+              
+              # 尝试仅下载二进制 wheel 包
+              if pip download -d /tmp/wheels --only-binary=:all: -r /tmp/requirements.txt; then
+                echo 'All dependencies downloaded successfully as pre-built wheels!'
+              else
+                echo '======================================================'
+                echo 'Step 2: Some wheels not available. Falling back to building from source...'
+                echo '======================================================'
+                
+                # 已经下载好的 wheel 会被跳过，只编译缺失的部分
+                pip wheel -w /tmp/wheels -r /tmp/requirements.txt
+              fi
+              
+              echo '======================================================'
+              echo 'Offline packages ready:'
+              ls -lh /tmp/wheels
+            "
+
+      - name: Upload Offline Wheels as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-wheels-py${{ github.event.inputs.python_version }}-${{ matrix.arch }}
+          path: ./offline_packages/*.whl
+          retention-days: 7
