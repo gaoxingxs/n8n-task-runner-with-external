@@ -18,13 +18,13 @@ jobs:
           # 2. 升级 pip 并安装 cmake
           python3 -m pip install --upgrade pip
           python3 -m pip install cmake
+          
+          # 3. 核心修正：建立 cmake 软链接确保全局可用
+          ln -s /usr/local/bin/cmake /usr/bin/cmake || true
 
-      - name: Manual Clone (Fix Node.js Glibc Error)
+      - name: Manual Clone
         run: |
-          # 由于 actions/checkout 需要高版本 glibc，我们手动 clone
           git clone --depth 1 https://github.com/ggerganov/llama.cpp .
-          # 如果需要子模块，取消下面行的注释
-          # git submodule update --init --recursive
 
       - name: Build
         run: |
@@ -34,15 +34,14 @@ jobs:
           mkdir build
           cd build
           
-          # 针对你的 Xeon 4214 (Cascade Lake) 开启 AVX512
-          # 静态链接 libstdc++ 以兼容 CentOS 7 宿主机
-          python3 -m cmake .. \
+          # 直接使用 cmake 命令代替 python3 -m cmake
+          cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
             -DGGML_AVX512=ON \
             -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
             -DCMAKE_SKIP_RPATH=ON
           
-          python3 -m cmake --build . --config Release -j $(nproc)
+          cmake --build . --config Release -j $(nproc)
 
       - name: Package Binaries
         run: |
