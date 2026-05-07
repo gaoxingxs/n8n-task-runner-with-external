@@ -1,5 +1,3 @@
-# .github/workflows/download-offline-rpms.yml
-
 name: Download Offline RPM Packages
 
 on:
