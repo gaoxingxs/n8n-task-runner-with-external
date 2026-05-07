@@ -1,161 +1,109 @@
-# .github/workflows/download-offline-rpms.yml
-
-name: Download Offline RPM Packages
+name: Download RPMs Offline
 
 on:
   workflow_dispatch:
     inputs:
-      os_image:
-        description: "Docker 镜像 (如 centos:7, rockylinux:8)"
+      system:
+        description: "Target OS repository"
         required: true
-        default: "centos:7"
-
+        default: "centos7"
+        type: choice
+        options:
+          - centos7
       packages:
-        description: "要下载的包名，多个用空格分隔"
+        description: "RPM package names, separated by spaces"
         required: true
         default: "rpcbind nfs-utils"
-
+        type: string
       arch:
-        description: "目标架构 (x86_64 / aarch64)"
+        description: "Target architecture"
         required: true
-        default: "x86_64"
+        default: "aarch64"
+        type: choice
+        options:
+          - aarch64
+          - x86_64
 
 jobs:
   download:
+    name: Download ${{ inputs.system }} ${{ inputs.arch }} RPMs
     runs-on: ubuntu-latest
+    container:
+      image: quay.io/centos/centos:stream9
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set Docker platform
-        id: platform
+      - name: Install downloader tools
         run: |
-          if [ "${{ inputs.arch }}" = "aarch64" ]; then
-            echo "platform=linux/arm64" >> $GITHUB_OUTPUT
-          else
-            echo "platform=linux/amd64" >> $GITHUB_OUTPUT
-          fi
+          set -euo pipefail
+          dnf -y install dnf-plugins-core createrepo_c tar gzip
 
-      - name: Prepare artifact name
-        id: artifact
+      - name: Configure target yum repositories
+        shell: bash
         run: |
-          NAME=$(echo "${{ inputs.os_image }}" | tr ':/' '--')
-          echo "name=$NAME" >> $GITHUB_OUTPUT
+          set -euo pipefail
 
-      - name: Set up QEMU
-        if: ${{ inputs.arch != 'x86_64' }}
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - name: Download RPM packages
-        run: |
-          mkdir -p output
-
-          docker run --rm \
-            --platform ${{ steps.platform.outputs.platform }} \
-            -v ${{ github.workspace }}/output:/output \
-            ${{ inputs.os_image }} \
-            sh -c '
-              set -e
-
-              echo "========== 系统信息 =========="
-              cat /etc/os-release || true
-              uname -m || true
-
-              echo "========== 修复 CentOS Vault =========="
-
-              if [ -f /etc/yum.repos.d/CentOS-Base.repo ]; then
-
-                sed -i "s/^mirrorlist=/#mirrorlist=/g" /etc/yum.repos.d/CentOS-*.repo
-
-                sed -i "s|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g" \
-                  /etc/yum.repos.d/CentOS-*.repo
-
-                if ! grep -q "vault.centos.org" /etc/yum.repos.d/CentOS-Base.repo; then
-
-                  cat > /etc/yum.repos.d/CentOS-Base.repo <<EOF
-[base]
-name=CentOS-\$releasever - Base
-baseurl=http://vault.centos.org/\$releasever/os/\$basearch/
-enabled=1
-gpgcheck=0
-
-[updates]
-name=CentOS-\$releasever - Updates
-baseurl=http://vault.centos.org/\$releasever/updates/\$basearch/
-enabled=1
-gpgcheck=0
-
-[extras]
-name=CentOS-\$releasever - Extras
-baseurl=http://vault.centos.org/\$releasever/extras/\$basearch/
-enabled=1
-gpgcheck=0
-EOF
-                fi
-              fi
-
-              echo "========== 安装下载工具 =========="
-
-              if command -v dnf >/dev/null 2>&1; then
-
-                echo "使用 dnf"
-
-                dnf install -y dnf-plugins-core --nogpgcheck
-
-                echo "========== 开始下载 RPM =========="
-
-                dnf install -y \
-                  --downloadonly \
-                  --downloaddir=/output \
-                  --nogpgcheck \
-                  ${{ inputs.packages }}
-
+          case "${{ inputs.system }}" in
+            centos7)
+              release="7.9.2009"
+              if [ "${{ inputs.arch }}" = "x86_64" ]; then
+                base="https://vault.centos.org/${release}"
               else
-
-                echo "使用 yum"
-
-                yum install -y yum-utils --nogpgcheck
-
-                echo "========== 开始下载 RPM =========="
-
-                yum install -y \
-                  --downloadonly \
-                  --downloaddir=/output \
-                  --nogpgcheck \
-                  ${{ inputs.packages }}
+                # CentOS 7 non-x86 architectures live under the official altarch vault.
+                base="https://vault.centos.org/altarch/${release}"
               fi
 
-              echo "========== 下载完成 =========="
-              ls -lh /output
-            '
+              cat > /etc/yum.repos.d/target-centos7.repo <<EOF
+          [target-base]
+          name=CentOS 7 Base - ${{ inputs.arch }}
+          baseurl=${base}/os/${{ inputs.arch }}/
+          enabled=1
+          gpgcheck=0
 
-      - name: Verify RPM files
+          [target-updates]
+          name=CentOS 7 Updates - ${{ inputs.arch }}
+          baseurl=${base}/updates/${{ inputs.arch }}/
+          enabled=1
+          gpgcheck=0
+
+          [target-extras]
+          name=CentOS 7 Extras - ${{ inputs.arch }}
+          baseurl=${base}/extras/${{ inputs.arch }}/
+          enabled=1
+          gpgcheck=0
+          EOF
+              ;;
+            *)
+              echo "Unsupported system: ${{ inputs.system }}" >&2
+              exit 1
+              ;;
+          esac
+
+          rm -f /etc/yum.repos.d/centos*.repo /etc/yum.repos.d/CentOS*.repo || true
+          dnf clean all
+          dnf --forcearch="${{ inputs.arch }}" repolist
+
+      - name: Download RPMs with dependencies
+        shell: bash
         run: |
-          cd output
+          set -euo pipefail
 
-          shopt -s nullglob
+          mkdir -p rpms
+          read -r -a pkg_array <<< "${{ inputs.packages }}"
 
-          files=(*.rpm)
+          dnf download \
+            --forcearch="${{ inputs.arch }}" \
+            --resolve \
+            --alldeps \
+            --destdir rpms \
+            "${pkg_array[@]}"
 
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "未下载到任何 RPM 文件"
-            exit 1
-          fi
-
-          echo "========== RPM 文件列表 =========="
-          ls -lh *.rpm
-
-      - name: Create archive
-        run: |
-          cd output
-          tar -czf offline-rpms.tar.gz ./*.rpm
-          mv offline-rpms.tar.gz ${{ github.workspace }}
+          createrepo_c rpms
+          rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}.rpm\n' rpms/*.rpm | sort > rpms/RPM_LIST.txt
+          tar -czf "rpms-${{ inputs.system }}-${{ inputs.arch }}.tar.gz" rpms
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: offline-rpms-${{ steps.artifact.outputs.name }}-${{ inputs.arch }}
-          path: offline-rpms.tar.gz
+          name: rpms-${{ inputs.system }}-${{ inputs.arch }}
+          path: rpms-${{ inputs.system }}-${{ inputs.arch }}.tar.gz
+          if-no-files-found: error
