@@ -90,8 +90,7 @@ jobs:
           mkdir -p rpms
           read -r -a pkg_array <<< "${{ inputs.packages }}"
 
-          dnf download \
-            --forcearch="${{ inputs.arch }}" \
+          dnf --forcearch="${{ inputs.arch }}" download \
             --resolve \
             --alldeps \
             --destdir rpms \
